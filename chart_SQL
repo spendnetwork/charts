@@ -1,0 +1,92 @@
+-- SPEND SQL
+
+select * from (SELECT tc.trans_id,
+       tc.entity_id                                                                                            AS buyer_id,
+       e.entity_name                                                                                           AS buyer,
+       e.level1,
+       e.level2,
+       e.level3,
+       COALESCE(NULLIF(upper(COALESCE(orgs_supplier.legal_name, orgs_cache.legal_name,
+                                      (tc.supplier_source_string)::text)), ''::text),
+                ' '::text)                                                                                     AS supplier,
+       orgs_supplier.id                                                                                        AS supplier_id,
+       COALESCE((pc_manual.proclass)::text, (pc_sic2pro.proclass)::text, (pc_pred.proclass)::text,
+                'Not Classified'::text)                                                                        AS proclass_code,
+       NULLIF(concat_ws(' - '::text, pc_lookup.pc_level1, pc_lookup.pc_level2, pc_lookup.pc_level3),
+              ''::text)                                                                                        AS proclass_title,
+       pc_lookup.pc_level1                                                                                     AS proclass_level1,
+       pc_lookup.pc_level2                                                                                     AS proclass_level2,
+       pc_lookup.pc_level3                                                                                     AS proclass_level3,
+       tc.date_calculated                                                                                      AS date,
+       tc.amount_calculated                                                                                    AS amount
+FROM (((((((((((((blue.trans_clean tc
+    LEFT JOIN ocds.orgs_ocds orgs_buyer ON (((orgs_buyer.scheme = 'GB-OO'::text) AND
+                                             (orgs_buyer.id = (tc.entity_id)::text))))
+    LEFT JOIN ocds.orgs_lookup_distinct orgs_supplier ON ((orgs_supplier.org_string = upper((tc.supplier_source_string)::text))))
+    LEFT JOIN ocds.orgs_data_cache orgs_cache ON (((orgs_supplier.scheme = orgs_cache.scheme) AND
+                                                   (orgs_supplier.id = orgs_cache.id))))
+    LEFT JOIN uk_data.entity e ON (((tc.entity_id)::text = (e.entity_id)::text)))
+    LEFT JOIN uk_data.entity county_entity ON (((orgs_cache.county_id_of_org)::text = (county_entity.entity_id)::text)))
+    LEFT JOIN uk_data.entity district_entity ON (((orgs_cache.district_id_of_org)::text =
+                                                  (district_entity.entity_id)::text)))
+    LEFT JOIN blue.supplier_classification sup ON (((tc.supplier_id)::text = (sup.supplier_id)::text)))
+    LEFT JOIN classification.trans_id_unspsc predicted_unspsc ON (((tc.trans_id)::text = (predicted_unspsc.trans_id)::text)))
+    LEFT JOIN classification.unspsc_v14 u ON ((
+            COALESCE((tc.unspsc_code)::integer, (NULLIF((sup.unspsc_code)::text, ''::text))::integer,
+                     (predicted_unspsc.unspsc_code)::integer) = u.class)))
+    LEFT JOIN classification.trans_clean_proclass_predictions pc_pred ON (((tc.trans_id)::text = (pc_pred.trans_id)::text)))
+    LEFT JOIN classification.trans_clean_proclass_manual pc_manual ON (((tc.trans_id)::text = (pc_manual.trans_id)::text)))
+    LEFT JOIN classification.sic_to_proclass pc_sic2pro ON ((orgs_cache.sic_codes[1] = pc_sic2pro.sic_code)))
+         LEFT JOIN classification.proclass_v17_1 pc_lookup
+                   ON (((COALESCE((pc_manual.proclass)::text, (pc_sic2pro.proclass)::text,
+                                  (pc_pred.proclass)::text))::integer = pc_lookup.pc_id)))
+WHERE (true AND (tc.amount_calculated <> 'NaN'::double precision) AND (tc.amount_calculated IS NOT NULL)))sub
+where date>= '2017-01-01'
+and date < '2020-01-01'
+and buyer = 'MINISTRY OF DEFENCE'
+--and supplier = 'DELOITTE LLP';
+
+
+-- TENDERS SQL
+
+select * from (SELECT t.ocid,
+       (t.value)::double precision                     AS value,
+       t.releasedate,
+       upper(COALESCE(orgs_buyer.legal_name, t.buyer)) AS buyer,
+       e.entity_id                                     AS buyer_id
+FROM (((ocds.ocds_tenders_view t
+    LEFT JOIN ocds.orgs_lookup_distinct orgs_buyer ON ((orgs_buyer.org_string = upper(t.buyer))))
+    LEFT JOIN uk_data.entity e ON (((orgs_buyer.scheme = 'GB-OO'::text) AND (orgs_buyer.id = (e.entity_id)::text))))
+         LEFT JOIN ocds.cpv_codes cpv ON ((t.cpvs[1] = cpv.code)))
+WHERE (true AND (isnumeric(t.value) OR (t.value IS NULL)) AND (NOT (t.ocid IN (SELECT duplicates.ocid
+                                                                               FROM ocds.duplicates))) AND
+       (t.enddate IS NOT NULL) AND (t.source <> 'ted_pipeline'::text)))sub
+where releasedate >= '2017-01-01'
+and releasedate < '2020-01-01'
+and buyer = 'MINISTRY OF DEFENCE'
+
+-- CONTRACT SQL
+
+select * from (SELECT aw.ocid,
+       aw.releasedate,
+       e.entity_id                                                                                             AS buyer_id,
+       upper(COALESCE(orgs_buyer.legal_name, aw.buyer))                                                        AS buyer,
+       upper(COALESCE(orgs_supplier.legal_name, aw.aw_supplier_name))                                          AS supplier,
+       orgs_supplier.id                                                                                        AS supplier_id,
+       (aw.aw_value)::numeric                                                                                  AS aw_value
+FROM (((((ocds.ocds_awards_suppliers_view_mat aw
+    LEFT JOIN ocds.orgs_lookup_distinct orgs_buyer ON ((orgs_buyer.org_string = upper(aw.buyer))))
+    LEFT JOIN ocds.orgs_lookup_distinct orgs_supplier ON ((orgs_supplier.org_string = upper(aw.aw_supplier_name))))
+    LEFT JOIN ocds.orgs_data_cache orgs_cache ON (((orgs_supplier.scheme = orgs_cache.scheme) AND
+                                                   (orgs_supplier.id = orgs_cache.id))))
+    LEFT JOIN uk_data.entity e ON ((orgs_buyer.id = (e.entity_id)::text)))
+         LEFT JOIN ocds.cpv_codes cpv ON ((aw.cpvs[1] = cpv.code)))
+WHERE (true AND (upper(COALESCE(orgs_supplier.legal_name, aw.aw_supplier_name)) IS NOT NULL) AND
+       (upper(COALESCE(orgs_supplier.legal_name, aw.aw_supplier_name)) <> ''::text) AND isnumeric(aw.aw_value)))sub
+where releasedate >= '2017-01-01'
+and releasedate < '2020-01-01'
+and buyer = 'MINISTRY OF DEFENCE'
+--and supplier = 'DELOITTE LLP';
+
+
+
