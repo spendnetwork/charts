@@ -1,4 +1,4 @@
-buyer,supplier,trans id,amount,date
+buyer,supplier,trans_id,amount,date
 Buyers spending on Virgin,Virgin companies,1,8969501.90,2016-01-01
 Buyers spending on Virgin,Virgin companies,2,10979587.08,2016-02-01
 Buyers spending on Virgin,Virgin companies,3,10933093.33,2016-03-01
